@@ -21,6 +21,11 @@ func NewRedisLock() *RedisLock {
 * @param int timeout   循环获取锁的等待超时时间，在此时间内会一直尝试获取锁直到超时，为0表示失败后直接返回不等待
 * @param int expire    当前锁的最大生存时间(秒)，必须大于0，如果超过生存时间锁仍未被释放，则系统会自动强制释放
 * @param int waitIntervalUs    获取锁失败后挂起再试的时间间隔(微秒)
+* 加锁原理:
+* 	在进程请求执行操作前进行判断，加锁是否成功，加锁成功允许执行下步操作；
+*   如果不成功，则判断锁的值（时间戳）是否大于当前时间，如果大于当前时间，则获取锁失败不允许执行下步操作；
+*   如果锁的值（时间戳）小于当前时间，并且GETSET命令获取到的锁的旧值依然小于当前时间，则获取锁成功允许执行下步操作；
+*   如果锁的值（时间戳）小于当前时间，并且GETSET命令获取到的锁的旧值大于当前时间，则获取锁失败不允许执行下步操作；
 * @return bool     true成功 false失败
  */
 func (rlock *RedisLock) Lock(name string, timeout int, expire int, waitIntervalUs int) bool {
@@ -39,7 +44,7 @@ func (rlock *RedisLock) Lock(name string, timeout int, expire int, waitIntervalU
 
 	for {
 		//将rediskey的最大生存时刻存到redis里，过了这个时刻该锁会被自动释放
-		result, err := rlock.Redis_conn.Do("SETNX", redisKey, expire)
+		result, err := rlock.Redis_conn.Do("SETNX", redisKey, expireAt)
 		if err != nil {
 			return false
 		}
@@ -56,11 +61,14 @@ func (rlock *RedisLock) Lock(name string, timeout int, expire int, waitIntervalU
 		ttl, _ := redis.Int64(rlock.Redis_conn.Do("TTL", redisKey))
 		//ttl小于0 表示key上没有设置生存时间（key是不会不存在的，因为前面setnx会自动创建）
 		//如果出现这种状况，那就是进程的某个实例setnx成功后 crash 导致紧跟着的expire没有被调用
-		//这时可以直接设置expire并把锁纳为己用
+		//这时可以直接设置expire并把锁纳为己用,且须判断旧值是否小于当前时间
 		if ttl < 0 {
-			rlock.Redis_conn.Do("EXPIRE", redisKey, expire)
-			rlock.LockedNames[name] = expireAt
-			return true
+			rt, _ := redis.Int64(rlock.Redis_conn.Do("GETSET", redisKey, expireAt))
+			if rt < nowtime {
+				rlock.Redis_conn.Do("EXPIRE", redisKey, expire)
+				rlock.LockedNames[name] = expireAt
+				return true
+			}
 		}
 
 		/*****循环请求锁部分*****/
