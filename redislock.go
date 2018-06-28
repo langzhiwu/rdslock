@@ -20,7 +20,7 @@ func NewRedisLock() *RedisLock {
 * @param string name   锁的标识名
 * @param int timeout   循环获取锁的等待超时时间，在此时间内会一直尝试获取锁直到超时，为0表示失败后直接返回不等待
 * @param int expire    当前锁的最大生存时间(秒)，必须大于0，如果超过生存时间锁仍未被释放，则系统会自动强制释放
-* @param int waitIntervalUs    获取锁失败后挂起再试的时间间隔(微秒)
+* @param int waitIntervalUs    获取锁失败后挂起再试的时间间隔(纳秒)
 * 加锁原理:
 * 	在进程请求执行操作前进行判断，加锁是否成功，加锁成功允许执行下步操作；
 *   如果不成功，则判断锁的值（时间戳）是否大于当前时间，如果大于当前时间，则获取锁失败不允许执行下步操作；
@@ -73,7 +73,7 @@ func (rlock *RedisLock) Lock(name string, timeout int, expire int, waitIntervalU
 
 		/*****循环请求锁部分*****/
 		//如果没设置锁失败的等待时间 或者 已超过最大等待时间了，那就退出
-		if timeout <= 0 || timeoutAt < time.Now().UnixNano()/1e6 {
+		if timeout <= 0 || timeoutAt < time.Now().UnixNano()/1e9 {
 			break
 		}
 		time.Sleep(time.Duration(waitIntervalUs))
